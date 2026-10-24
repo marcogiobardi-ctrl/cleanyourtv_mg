@@ -1,0 +1,40 @@
+name: Build IRIS Skyworth Android 11 APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Inject Android 11 & TV Architecture Config
+        run: |
+          # Finds your app's build.gradle file and ensures it targets API 30 (Android 11)
+          find . -name "build.gradle" -exec sed -i 's/targetSdkVersion [0-9]*/targetSdkVersion 30/g' {} +
+          find . -name "build.gradle" -exec sed -i 's/targetSdk [0-9]*/targetSdk 30/g' {} +
+          
+          # Forces the build matrix to generate universal ARM compatibility for Skyworth chips
+          find . -name "build.gradle" -exec sed -i '/ndk {/a \ \ \ \ \ \ \ \ \ \ \ \ abiFilters "armeabi-v7a", "arm64-v8a"' {} +
+
+      - name: Grant Execute Permission for Gradle
+        run: chmod +x gradlew
+
+      - name: Compile Optimized TV APK
+        run: ./gradlew assembleRelease
+
+      - name: Upload Finished APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: IRIS-Skyworth-CleanYourTV-APK
+          path: '**/build/outputs/apk/release/*-unsigned.apk'
