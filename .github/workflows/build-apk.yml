@@ -1,11 +1,10 @@
-name: Build IRIS Skyworth Android 11 APK
+name: Compile CleanYourTV Skyworth APK
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    # Explicitly locks onto a known stable image to avoid environment variance
     runs-on: ubuntu-24.04
 
     steps:
@@ -17,34 +16,104 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: '17'
-          cache: 'gradle'
 
-      - name: Inject Android 11 & TV Architecture Config
+      - name: Initialize Android TV Shell Structure
         run: |
-          # Forces compilation targets to align safely with Android 11 (API 30)
-          find . -name "build.gradle" -exec sed -i 's/targetSdkVersion [0-9]*/targetSdkVersion 30/g' {} +
-          find . -name "build.gradle" -exec sed -i 's/targetSdk [0-9]*/targetSdk 30/g' {} +
+          mkdir -p android-project/app/src/main/assets
+          mkdir -p android-project/app/src/main/res/mipmap
           
-          # Adds architecture restrictions matching Skyworth core media chips
-          find . -name "build.gradle" -exec sed -i '/ndk {/a \ \ \ \ \ \ \ \ \ \ \ \ abiFilters "armeabi-v7a", "arm64-v8a"' {} +
+          # Move repository assets safely into the app asset directory
+          find . -maxdepth 1 -not -name 'android-project' -not -name '.git' -not -name '.github' -exec cp -r {} android-project/app/src/main/assets/ \;
 
-      - name: Grant Execute Permission for Gradle
+      - name: Construct Native TV Launch Manifest
         run: |
-          if [ -f "launcher/gradlew" ]; then
-            chmod +x launcher/gradlew
-          elif [ -f "gradlew" ]; then
-            chmod +x gradlew
-          fi
+          cat << 'EOF' > android-project/app/src/main/AndroidManifest.xml
+          <manifest xmlns:android="http://android.com" package="com.cleanyourtv.launcher">
+              <uses-feature android:name="android.software.leanback" android:required="false" />
+              <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+              <uses-permission android:name="android.permission.INTERNET" />
+              <application 
+                  android:label="CleanYourTV" 
+                  android:banner="@mipmap/ic_banner"
+                  android:icon="@mipmap/ic_launcher"
+                  android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                          <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
 
-      - name: Compile Optimized TV APK
+      - name: Inject Android TV Core Source
         run: |
-          if [ -d "launcher" ] && [ -f "launcher/gradlew" ]; then
-            cd launcher && ./gradlew assembleRelease
-          else
-            ./gradlew assembleRelease
-          fi
+          mkdir -p android-project/app/src/main/java/com/cleanyourtv/launcher
+          cat << 'EOF' > android-project/app/src/main/java/com/cleanyourtv/launcher/MainActivity.java
+          package com.cleanyourtv.launcher;
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
 
-      - name: Upload Finished APK
+          public class MainActivity extends Activity {
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  WebView webView = new WebView(this);
+                  WebSettings settings = webView.getSettings();
+                  settings.setJavaScriptEnabled(true);
+                  settings.setDomStorageEnabled(true);
+                  settings.setMediaPlaybackRequiresUserGesture(false);
+                  webView.setWebViewClient(new WebViewClient());
+                  
+                  // Targets internal app assets or falls back to server portal
+                  webView.loadUrl("file:///android_asset/index.html");
+                  setContentView(webView);
+              }
+          }
+          EOF
+
+      - name: Formulate Gradle Build Specifications
+        run: |
+          cat << 'EOF' > android-project/build.gradle
+          buildscript {
+              repositories { google() \n mavenCentral() }
+              dependencies { classpath 'com.android.tools.build:gradle:8.2.2' }
+          }
+          allprojects {
+              repositories { google() \n mavenCentral() }
+          }
+          EOF
+
+          cat << 'EOF' > android-project/app/build.gradle
+          plugins { id 'com.android.application' }
+          android {
+              namespace 'com.cleanyourtv.launcher'
+              compileSdk 34
+              defaultConfig {
+                  applicationId "com.cleanyourtv.launcher"
+                  minSdk 21
+                  targetSdk 30
+                  versionCode 1
+                  versionName "1.0"
+                  ndk { abiFilters "armeabi-v7a", "arm64-v8a" }
+              }
+          }
+          EOF
+
+          echo "include ':app'" > android-project/settings.gradle
+
+      - name: Execute Android Packaging Build
+        run: |
+          cd android-project
+          gradle wrapper --gradle-version 8.5
+          ./gradlew assembleRelease
+
+      - name: Export Output App Bundle
         uses: actions/upload-artifact@v4
         with:
           name: IRIS-Skyworth-CleanYourTV-APK
