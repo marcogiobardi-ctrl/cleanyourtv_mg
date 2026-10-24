@@ -14,118 +14,28 @@ jobs:
       - name: Set up Java JDK 17
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
-          java-version: '17'
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platforms;android-34 build-tools;34.0.0
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.5'
 
-      - name: Initialize Android TV Shell Structure
+      - name: Build launcher APK
+        working-directory: launcher
         run: |
-          mkdir -p android-project/app/src/main/assets
-          find . -mindepth 1 -maxdepth 1 \
-            -not -name 'android-project' -not -name '.git' -not -name '.github' \
-            -exec cp -r {} android-project/app/src/main/assets/ \;
-          ls -la android-project/app/src/main/assets/
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease --stacktrace
 
-      - name: Construct Native TV Launch Manifest
-        run: |
-          cat << 'EOF' > android-project/app/src/main/AndroidManifest.xml
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <uses-feature android:name="android.software.leanback" android:required="false" />
-              <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-              <uses-permission android:name="android.permission.INTERNET" />
-              <application
-                  android:label="CleanYourTV"
-                  android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
-                  <activity android:name=".MainActivity" android:exported="true">
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN" />
-                          <category android:name="android.intent.category.LAUNCHER" />
-                          <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
-                      </intent-filter>
-                  </activity>
-              </application>
-          </manifest>
-          EOF
+      - name: Show APK
+        run: ls -la launcher/app/build/outputs/apk/release/
 
-      - name: Inject Android TV Core Source
-        run: |
-          mkdir -p android-project/app/src/main/java/com/cleanyourtv/launcher
-          cat << 'EOF' > android-project/app/src/main/java/com/cleanyourtv/launcher/MainActivity.java
-          package com.cleanyourtv.launcher;
-
-          import android.app.Activity;
-          import android.os.Bundle;
-          import android.webkit.WebSettings;
-          import android.webkit.WebView;
-          import android.webkit.WebViewClient;
-
-          public class MainActivity extends Activity {
-              @Override
-              protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-                  WebView webView = new WebView(this);
-                  WebSettings settings = webView.getSettings();
-                  settings.setJavaScriptEnabled(true);
-                  settings.setDomStorageEnabled(true);
-                  settings.setAllowFileAccess(true);
-                  settings.setMediaPlaybackRequiresUserGesture(false);
-                  webView.setWebViewClient(new WebViewClient());
-                  webView.loadUrl("file:///android_asset/index.html");
-                  setContentView(webView);
-              }
-          }
-          EOF
-
-      - name: Formulate Gradle Build Specifications
-        run: |
-          cat << 'EOF' > android-project/build.gradle
-          buildscript {
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-              dependencies {
-                  classpath 'com.android.tools.build:gradle:8.2.2'
-              }
-          }
-          allprojects {
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-          EOF
-
-          cat << 'EOF' > android-project/app/build.gradle
-          plugins { id 'com.android.application' }
-          android {
-              namespace 'com.cleanyourtv.launcher'
-              compileSdk 34
-              defaultConfig {
-                  applicationId "com.cleanyourtv.launcher"
-                  minSdk 21
-                  targetSdk 30
-                  versionCode 1
-                  versionName "1.0"
-              }
-          }
-          EOF
-
-          cat << 'EOF' > android-project/settings.gradle
-          include ':app'
-          EOF
-
-      - name: Execute Android Packaging Build
-        run: |
-          cd android-project
-          gradle assembleDebug --stacktrace
-
-      - name: Export Output App Bundle
+      - name: Export APK
         uses: actions/upload-artifact@v4
         with:
           name: IRIS-Skyworth-CleanYourTV-APK
-          path: android-project/app/build/outputs/apk/debug/*.apk
+          path: launcher/app/build/outputs/apk/release/app-release.apk
